@@ -1,0 +1,139 @@
+#!/usr/bin/env python3 
+
+#Leiara Rivera, GEN 8450, Clemson University, 03-20-2025
+#Objective: With the prior installation of GDC client download TCGA-BRCA GDC manifest of RNAseq data and build a gene expression matrix (GEM). 
+
+
+import os
+import glob
+import pandas as pd
+from tqdm import tqdm
+import tempfile
+import psutil
+import gc
+from datetime import datetime
+
+def estimate_memory_requirements(sample_dirs, avg_genes=60000):
+    """Estimate memory requirements based on number of samples and genes"""
+    # Rough estimate: each value takes ~8 bytes (float64)
+    # Plus overhead for pandas DataFrame
+    estimated_bytes = avg_genes * len(sample_dirs) * 8 * 1.5  # 1.5 factor for overhead
+    estimated_gb = estimated_bytes / (1024**3)
+    return estimated_gb
+
+def main():
+    # Set the main directory 
+    main_dir = "/scratch/leiarar/tca-brca-trans/"
+    print(f"Working in directory: {main_dir}")
+    
+    # Change to the main directory
+    os.chdir(main_dir)
+    
+    # Get all sample directories
+    sample_dirs = [d for d in os.listdir(main_dir) 
+                  if os.path.isdir(d) and not d.startswith(".") and not d.startswith("temp_")]
+    
+    print(f"Found {len(sample_dirs)} sample directories")
+    
+    # Estimate memory requirements
+    est_memory_gb = estimate_memory_requirements(sample_dirs)
+    available_memory_gb = psutil.virtual_memory().available / (1024**3)
+    
+    print(f"Estimated memory requirement: {est_memory_gb:.2f} GB")
+    print(f"Available memory: {available_memory_gb:.2f} GB")
+    
+    if est_memory_gb > available_memory_gb:
+        print(f"WARNING: This process may require more memory than available.")
+        print(f"Consider processing in batches or on a machine with at least {max(16, int(est_memory_gb*1.5))} GB RAM")
+    
+    # First, extract gene information from the first sample to get gene names
+    print("Extracting gene information from first sample...")
+    first_sample = sample_dirs[0]
+    tsv_files = glob.glob(f"{first_sample}/*.tsv")
+    
+    if not tsv_files:
+        print(f"Error: No TSV file found in first sample directory {first_sample}")
+        return
+    
+    # Dictionary to store gene_name -> index mapping for faster lookups
+    gene_names = []
+    
+    try:
+        with open(tsv_files[0], 'r') as f:
+            # Skip the first 6 lines (header and metadata)
+            for _ in range(6):
+                next(f)
+            
+            # Process each line to extract gene_name (column 1)
+            for line in f:
+                fields = line.strip().split('\t')
+                if len(fields) > 5:
+                    gene_name = fields[1]  # gene_name column
+                    gene_names.append(gene_name)
+    except Exception as e:
+        print(f"Error processing {tsv_files[0]}: {e}")
+        return
+    
+    print(f"Extracted information for {len(gene_names)} genes")
+    
+    # Initialize the DataFrame with gene_name as index
+    df = pd.DataFrame(index=gene_names)
+    
+    # Process each sample
+    print("Processing samples...")
+    for sample_dir in tqdm(sample_dirs):
+        tsv_files = glob.glob(f"{sample_dir}/*.tsv")
+        
+        if not tsv_files:
+            print(f"Warning: No TSV file found in {sample_dir}, skipping")
+            continue
+        
+        try:
+            # Create a temporary dictionary to hold this sample's data
+            sample_data = {}
+            
+            with open(tsv_files[0], 'r') as f:
+                # Skip the first 6 lines
+                for _ in range(6):
+                    next(f)
+                
+                # Read gene expression values
+                for i, line in enumerate(f):
+                    if i >= len(gene_names):
+                        break
+                        
+                    fields = line.strip().split('\t')
+                    if len(fields) > 5:
+                        gene_name = fields[1]
+                        expression_value = fields[5]  # stranded_second column
+                        sample_data[gene_name] = expression_value
+            
+            # Add this sample's data as a new column
+            df[sample_dir] = pd.Series(sample_data)
+            
+        except Exception as e:
+            print(f"Error processing {sample_dir}: {e}")
+            df[sample_dir] = pd.Series(["NA"] * len(gene_names), index=gene_names)
+        
+        # Force garbage collection to free memory
+        gc.collect()
+    
+    # Fill NA values
+    df.fillna("NA", inplace=True)
+    
+    # Set the output filename
+    output_filename = "genexp_optimize_matrix.tsv"
+    
+    # Save the DataFrame to TSV
+    print(f"Saving matrix to {output_filename}...")
+    df.to_csv(output_filename, sep='\t')
+    
+    print(f"\nMatrix created: {output_filename}")
+    print(f"Matrix dimensions: {df.shape[0]} genes × {df.shape[1]} samples")
+    print(f"Memory usage: {df.memory_usage(deep=True).sum() / (1024**3):.2f} GB")
+
+if __name__ == "__main__":
+    start_time = datetime.now()
+    main()
+    end_time = datetime.now()
+    print(f"Total execution time: {end_time - start_time}")
