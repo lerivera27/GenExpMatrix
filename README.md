@@ -1,4 +1,5 @@
-# Gene Expression Matrix (GEM) Generator 
+
+#Leiara Rivera, Clemson University
 
 #Description: 
 This Python script is designed to download RNAseq data from the TCGA-BRCA GDC manifest, process the data, and create a Gene Expression Matrix (GEM). It assumes that the GDC client has already been installed with its latest version, and is used to download the necessary data. The script will estimate memory requirements, process the gene expression data from each sample, and save the results in a '.tsv' file. 
