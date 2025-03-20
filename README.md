@@ -1,5 +1,3 @@
-# GenExpMatrix
-
 # Gene Expression Matrix (GEM) Generator 
 
 #Description: 
